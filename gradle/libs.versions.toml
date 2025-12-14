@@ -1,5 +1,6 @@
 [versions]
 agp = "8.13.2"
+datastorePreferences = "1.2.0"
 jsoup = "1.21.2"
 kotlin = "2.2.21"
 coreKtx = "1.10.1"
@@ -15,9 +16,12 @@ activityCompose = "1.8.0"
 composeBom = "2024.09.00"
 composeMaterial3 = "1.4.0"
 materialIcons = "1.4.3"
+securityCrypto = "1.1.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastorePreferences" }
+androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "securityCrypto" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

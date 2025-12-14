@@ -2,7 +2,11 @@
 
 package online.krabice.tabsclient
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -17,12 +21,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material3.Divider
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -41,12 +46,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.lifecycleScope
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 
 import online.krabice.tabsclient.ui.theme.TabsClientTheme
 import online.krabice.tabsclient.BuildConfig
@@ -71,9 +83,10 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.net.UnknownHostException
-
-
-const val API_URL = "http://cat-heater:8000"
+import androidx.core.content.edit
+import io.ktor.client.plugins.timeout
+import io.ktor.http.URLParserException
+import java.net.ConnectException
 
 
 @Serializable
@@ -81,6 +94,7 @@ data class Chords(
     val id: Int,
     val url: String,
     val version: Int,
+    val content: String,
 
     @SerialName("song_id")
     val songId: Int,
@@ -92,6 +106,7 @@ data class Tab(
     val url: String,
     val version: Int,
     val bass: Boolean,
+    val content: String,
 
     @SerialName("song_id")
     val songId: Int,
@@ -116,110 +131,110 @@ data class ErrorResponse(
     val detail: String
 )
 
+fun encryptedPrefs(context: Context): SharedPreferences {
+    val masterKey = MasterKey.Builder(context)
+        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+        .build()
+
+    return EncryptedSharedPreferences.create(
+        context,
+        "secure_prefs",
+        masterKey,
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+    )
+}
+
+fun saveCredentials(
+    context: Context,
+    username: String,
+    password: String,
+    serverUrl: String,
+) {
+    val prefs = encryptedPrefs(context)
+    prefs.edit {
+        putString("username", username)
+            .putString("password", password)
+            .putString("serverUrl", serverUrl)
+    }
+}
+fun loadCredentials(context: Context): Triple<String, String, String> {
+    // TODO: BuildConfig is for debug only, remove later
+    val prefs = encryptedPrefs(context)
+    val username = prefs.getString("username", "") ?: ""
+    val password = prefs.getString("password", "") ?: ""
+    val serverUrl = prefs.getString("serverUrl", "") ?: ""
+
+    return Triple(username, password, serverUrl)
+}
 
 class MainActivity : ComponentActivity() {
+    private val TAG = "MainActivity"
+
     private var isRefreshing by mutableStateOf(false)
 
     private var songs by mutableStateOf<List<Song>>(emptyList())
-    // TODO: For debug only, remove later
-    private var username by mutableStateOf(BuildConfig.USERNAME)
-    private var password by mutableStateOf(BuildConfig.PASSWORD)
 
-    suspend fun getChords(chordsId: Int): String {
-        println("Getting chords")
 
-        val client = HttpClient(CIO) {
-            install(ContentNegotiation) {
-                json()
-            }
-            install(HttpTimeout) {
-                requestTimeoutMillis = 10000
-            }
+
+    val client = HttpClient(CIO) {
+        install(ContentNegotiation) {
+            json()
         }
+        install(HttpTimeout)
+    }
+
+    suspend fun getRequest(url: String): HttpResponse? {
+        val (_, _, serverUrl) = loadCredentials(this)
+
+        Log.i(TAG, "Getting $serverUrl/$url")
         try {
-            val response = client.get("$API_URL/chords/$chordsId")
+            val response = client.get("$serverUrl/$url")
+
             if (response.status != HttpStatusCode.OK) {
-                println("Non-OK HTTP status: ${response.status.value}, ${response.status.description}")
-                return "ERROR: ${response.body<ErrorResponse>().detail}"
+                Log.e(TAG, "Non-OK HTTP status: ${response.status.value}, ${response.status.description}, detail: ${response.body<ErrorResponse>().detail}")
+                return null
             }
+            return response
 
-            val content: String = response.body<ContentResponse>().content
-
-            client.close()
-            return content
         } catch (e: UnresolvedAddressException) {
-            println("Unknown address exception")
-            client.close()
-            return "ERROR: Unknown address"
+            Toast.makeText(
+                this,
+                "ERROR: Invalid server URL",
+                Toast.LENGTH_SHORT
+            ).show()
+            Log.e(TAG, "Unresolved address exception")
+            return null
+        } catch (e: ConnectException) {
+            Toast.makeText(
+                this,
+                "ERROR: Server refused connection",
+                Toast.LENGTH_SHORT
+            ).show()
+            Log.e(TAG, "Connect exception")
+            return null
+        } catch (e: URLParserException) {
+            Toast.makeText(
+                this,
+                "ERROR: Invalid server URL",
+                Toast.LENGTH_SHORT
+            ).show()
+            Log.e(TAG, "URL parser exception")
+            return null
         }
     }
 
     suspend fun updateSavedSongs() {
         isRefreshing = true
 
-        try {
-            val client = HttpClient(CIO) {
-                install(ContentNegotiation) {
-                    json()
-                }
-            }
+        songs = getRequest("saved_songs")?.body() ?: emptyList()
 
-            try {
-                songs = client.get("$API_URL/saved_songs").body()
-                client.close()
-            }
-            catch (e: UnresolvedAddressException) {
-                println("Unknown address exception")
-                client.close()
-            }
-        } finally {
-            isRefreshing = false
-        }
-
+        isRefreshing = false
     }
 
-    suspend fun updateSongs() {
-        println("Updating songs")
 
-        isRefreshing = true
-
-        val client = HttpClient(CIO) {
-            install(ContentNegotiation) {
-                json()
-            }
-            install(HttpTimeout) {
-                requestTimeoutMillis = 60000
-            }
-        }
-
-        try {
-
-            val response = client.post("$API_URL/update") {
-                contentType(ContentType.Application.Json)
-                setBody(mapOf("username" to username, "password" to password))
-            }
-            if (response.status != HttpStatusCode.OK) {
-                println("Non-OK HTTP status: ${response.status.value}, ${response.status.description}")
-                println("Response: ${response.bodyAsText()}")
-                isRefreshing = false
-                client.close()
-                return
-            }
-
-            client.close()
-        }
-        catch (e: UnresolvedAddressException) {
-            println("Unknown address exception")
-            client.close()
-        } finally {
-            isRefreshing = false
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-
-        println("API URL: $API_URL!")
-
         lifecycleScope.launch {
             updateSavedSongs()
         }
@@ -234,11 +249,6 @@ class MainActivity : ComponentActivity() {
                     {
                         lifecycleScope.launch { updateSavedSongs() }
                     },
-                    username,
-                    {username = it},
-                    password,
-                    {password = it},
-                    { getChords(it) }
                 )
             }
         }
@@ -250,11 +260,6 @@ fun TabsClientApp(
     songs: List<Song>,
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
-    username: String,
-    onUsernameChange: (String) -> Unit,
-    password: String,
-    onPasswordChange: (String) -> Unit,
-    getChords: suspend (Int) -> String
 ) {
     var currentDestination by rememberSaveable { mutableStateOf(AppDestinations.HOME) }
     var selectedSong by rememberSaveable { mutableStateOf<Song?>(null) }
@@ -271,7 +276,7 @@ fun TabsClientApp(
                     },
                     label = { Text(it.label) },
                     selected = it == currentDestination,
-                    onClick = { currentDestination = it }
+                    onClick = { currentDestination = it; selectedSong = null }
                 )
             }
         }
@@ -281,7 +286,6 @@ fun TabsClientApp(
                 selectedSong != null -> SongDetailScreen(
                     selectedSong!!,
                     { selectedSong = null },
-                    getChords
                 )
 
                 else -> when (currentDestination) {
@@ -291,10 +295,6 @@ fun TabsClientApp(
 
                     AppDestinations.FAVORITES -> Text("Favourites")
                     AppDestinations.PROFILE -> ProfileScreen(
-                        username,
-                        onUsernameChange,
-                        password,
-                        onPasswordChange
                     )
                 }
             }
@@ -327,7 +327,7 @@ fun SongListScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 16.dp, bottom = 16.dp),
+                    .padding(top = 30.dp),
                 contentPadding = PaddingValues(top = 40.dp)
             ) {
                 if (songs.isEmpty() && !isRefreshing) {
@@ -357,7 +357,8 @@ fun SongRow(song: Song, onClick: () -> Unit) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 song.title,
-                style = MaterialTheme.typography.titleMedium
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.tertiary,
             )
             Text(
                 song.artist,
@@ -370,45 +371,89 @@ fun SongRow(song: Song, onClick: () -> Unit) {
 
 @Composable
 fun ProfileScreen(
-    username: String,
-    onUsernameChange: (String) -> Unit,
-    password: String,
-    onPasswordChange: (String) -> Unit,
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize().padding(top = 40.dp, start = 16.dp, end = 16.dp)) {
+    val context = LocalContext.current
+
+    var username by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    var serverUrl by rememberSaveable { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        val (u, p, s) = loadCredentials(context)
+        username = u
+        password = p
+        serverUrl = s
+    }
+
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(top = 40.dp, start = 16.dp, end = 16.dp, bottom = 16.dp)) {
         item {
             OutlinedTextField(
                 value=username,
-                onValueChange = onUsernameChange,
+                onValueChange = {
+                    username = it
+                    saveCredentials(
+                        context,
+                        username,
+                        password,
+                        serverUrl
+                    )},
                 label = { Text("Username") }
             )
-
             OutlinedTextField(
                 value=password,
-                onValueChange = onPasswordChange,
+                onValueChange = {
+                    password = it
+                    saveCredentials(
+                        context,
+                        username,
+                        password,
+                        serverUrl
+                    )},
                 label = { Text("Password") },
-
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password
+                )
             )
+            OutlinedTextField(
+                value=serverUrl,
+                onValueChange = {
+                    serverUrl = it
+                    saveCredentials(
+                        context,
+                        username,
+                        password,
+                        serverUrl
+                    )},
+                label = { Text("Server URL") }
+            )
+
+            // TODO: Implement onClick
+            Button({}) {
+                Text("Update server cache")
+            }
         }
     }
 }
 
 @Composable
-fun SongDetailScreen(song: Song, onBack: () -> Unit, getChords: suspend (Int) -> String) {
+fun SongDetailScreen(song: Song, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     var chordsText by rememberSaveable { mutableStateOf<String?>(null) }
     var isLoading by rememberSaveable { mutableStateOf(true) }
 
     LaunchedEffect(song.id) {
         isLoading = true
-        chordsText = getChords(song.chords.first().id)
+        //chordsText = getChords(song.chords.first().id)
+        // TODO: Temporarily always first chord, later add selection of tab/chords and version
+        chordsText = song.chords.first().content
         isLoading = false
     }
 
     val scrollState = rememberScrollState()
 
     Column(modifier = Modifier
-        .padding(16.dp)
+        .padding(top = 16.dp, start = 16.dp, end = 16.dp)
         .verticalScroll(scrollState)
         .fillMaxSize()
     ) {

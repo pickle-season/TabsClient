@@ -30,6 +30,7 @@ android {
 
         buildConfigField("String", "USERNAME", "\"${properties.getProperty("username", "")}\"")
         buildConfigField("String", "PASSWORD", "\"${properties.getProperty("password", "")}\"")
+        buildConfigField("String", "SERVER_URL", "\"${properties.getProperty("serverUrl", "")}\"")
 
     }
 
@@ -79,5 +80,7 @@ dependencies {
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.security.crypto)
 
 }
