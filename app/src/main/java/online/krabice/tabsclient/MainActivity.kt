@@ -63,12 +63,14 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.util.network.UnresolvedAddressException
 
 import kotlinx.coroutines.launch
 import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.net.UnknownHostException
 
 
 const val API_URL = "http://cat-heater:8000"
@@ -134,16 +136,22 @@ class MainActivity : ComponentActivity() {
                 requestTimeoutMillis = 10000
             }
         }
-        val response = client.get("$API_URL/chords/$chordsId")
-        if (response.status != HttpStatusCode.OK) {
-            println("Non-OK HTTP status: ${response.status.value}, ${response.status.description}")
-            return "ERROR: ${response.body<ErrorResponse>().detail}"
+        try {
+            val response = client.get("$API_URL/chords/$chordsId")
+            if (response.status != HttpStatusCode.OK) {
+                println("Non-OK HTTP status: ${response.status.value}, ${response.status.description}")
+                return "ERROR: ${response.body<ErrorResponse>().detail}"
+            }
+
+            val content: String = response.body<ContentResponse>().content
+
+            client.close()
+            return content
+        } catch (e: UnresolvedAddressException) {
+            println("Unknown address exception")
+            client.close()
+            return "ERROR: Unknown address"
         }
-
-        val content: String = response.body<ContentResponse>().content
-
-        client.close()
-        return content
     }
 
     suspend fun updateSavedSongs() {
@@ -156,8 +164,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            songs = client.get("$API_URL/saved_songs").body()
-            client.close()
+            try {
+                songs = client.get("$API_URL/saved_songs").body()
+                client.close()
+            }
+            catch (e: UnresolvedAddressException) {
+                println("Unknown address exception")
+                client.close()
+            }
         } finally {
             isRefreshing = false
         }
@@ -165,19 +179,21 @@ class MainActivity : ComponentActivity() {
     }
 
     suspend fun updateSongs() {
+        println("Updating songs")
+
         isRefreshing = true
 
-        try {
-            println("Updating songs")
-
-            val client = HttpClient(CIO) {
-                install(ContentNegotiation) {
-                    json()
-                }
-                install(HttpTimeout) {
-                    requestTimeoutMillis = 60000
-                }
+        val client = HttpClient(CIO) {
+            install(ContentNegotiation) {
+                json()
             }
+            install(HttpTimeout) {
+                requestTimeoutMillis = 60000
+            }
+        }
+
+        try {
+
             val response = client.post("$API_URL/update") {
                 contentType(ContentType.Application.Json)
                 setBody(mapOf("username" to username, "password" to password))
@@ -190,6 +206,10 @@ class MainActivity : ComponentActivity() {
                 return
             }
 
+            client.close()
+        }
+        catch (e: UnresolvedAddressException) {
+            println("Unknown address exception")
             client.close()
         } finally {
             isRefreshing = false
