@@ -147,7 +147,7 @@ class MainActivity : ComponentActivity() {
     suspend fun updateSavedSongs() {
         isRefreshing = true
 
-        songs = getRequest("saved_songs")?.body() ?: emptyList()
+        songs = getRequest("saved_songs")?.body<List<Song>>()?.sortedBy { it.title } ?: emptyList()
 
         isRefreshing = false
     }

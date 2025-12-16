@@ -1,6 +1,9 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package online.krabice.tabsclient
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,47 +14,55 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FontDownload
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SearchBar
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TabsClientApp(
     songs: List<Song>,
@@ -63,9 +74,24 @@ fun TabsClientApp(
     var selectedChords by rememberSaveable { mutableStateOf<Chords?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf<Tab?>(null) }
 
+
+    var isSearching by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+
+    val songListState = rememberSaveable(
+        saver = LazyListState.Saver
+    ) {
+        LazyListState()
+    }
+
     BackHandler(enabled = selectedChords != null || selectedTab != null) {
         selectedChords = null
         selectedTab = null
+    }
+
+    BackHandler(enabled = isSearching) {
+        isSearching = false
+        searchQuery = ""
     }
 
     NavigationSuiteScaffold(
@@ -83,53 +109,83 @@ fun TabsClientApp(
             }
         }
     ) {
-        Box(Modifier.fillMaxSize()) {
-            when {
-                // when selected chords is not null, show chords detail
-                selectedChords != null -> {
-                    ChordsDetailScreen(selectedChords!!) { selectedChords = null }
-                }
-                // when selected tab is not null, show tab detail
-                selectedTab != null -> {
-                    TabDetailScreen(selectedTab!!) { selectedTab = null }
-                }
-                // if both are null, show song list
-                else -> {
-                    when (currentDestination) {
-                        AppDestinations.SONGS -> SongListScreen(
-                            songs,
-                            isRefreshing,
-                            onRefresh,
-                            onSongClick = { selectedSong = it }
-                        )
-                        AppDestinations.SETTINGS -> ProfileScreen()
+        Scaffold(
+            topBar = {
+                TabsClientTopBar(
+                    currentDestination,
+                    selectedChords != null || selectedTab != null,
+                    {
+                        selectedChords = null
+                        selectedTab = null
+                        selectedSong = null
+                    },
+                    isSearching,
+                    {
+                        isSearching = !isSearching
+                        if (!isSearching) {
+                            searchQuery = ""
+                        }
                     }
+                )
+            }
+        ) { padding ->
+            Box(Modifier
+                .fillMaxSize()
+                .padding(padding)) {
+                when {
+                    // when selected chords is not null, show chords detail
+                    selectedChords != null -> {
+                        ChordsDetailScreen(selectedChords!!, selectedSong!!) {
+                            selectedChords = null
+                            selectedSong = null
+                        }
+                    }
+                    // when selected tab is not null, show tab detail
+                    selectedTab != null -> {
+                        TabDetailScreen(selectedTab!!, selectedSong!!) {
+                            selectedTab = null
+                            selectedSong = null
+                        }
+                    }
+                    // if both are null, show song list
+                    else -> {
+                        when (currentDestination) {
+                            AppDestinations.SONGS -> SongListScreen(
+                                songs,
+                                isRefreshing,
+                                onRefresh,
+                                onSongClick = { selectedSong = it },
+                                songListState,
+                                isSearching,
+                                searchQuery,
+                                onSearchChange = { searchQuery = it },
+                            )
 
-                    // if song is selected, show modal
-                    selectedSong?.let { song ->
-                        // if song has only one chords or one tab, go there directly
-                        if (song.chords.size == 1 && song.tabs.isEmpty()) {
-                            selectedChords = song.chords.first()
-                            selectedSong = null
+                            AppDestinations.SETTINGS -> SettingsScreen()
                         }
-                        else if (song.chords.isEmpty() && song.tabs.size == 1) {
-                            selectedTab = song.tabs.first()
-                            selectedSong = null
-                        }
-                        else {
-                            ModalBottomSheet(onDismissRequest = { selectedSong = null }) {
-                                SongBottomSheet(
-                                    song = song,
-                                    onChordsClick = {
-                                        selectedChords = it
-                                        selectedSong = null
-                                    },
-                                    onTabClick = {
-                                        selectedTab = it
-                                        selectedSong = null
-                                    },
-                                    onClose = { selectedSong = null }
-                                )
+
+                        // if song is selected, show modal
+                        selectedSong?.let { song ->
+                            // if song has only one chords or one tab, go there directly
+                            if (song.chords.size == 1 && song.tabs.isEmpty()) {
+                                selectedChords = song.chords.first()
+                                //selectedSong = null
+                            } else if (song.chords.isEmpty() && song.tabs.size == 1) {
+                                selectedTab = song.tabs.first()
+                                //selectedSong = null
+                            } else {
+                                ModalBottomSheet(onDismissRequest = { selectedSong = null }) {
+                                    SongBottomSheet(
+                                        song = song,
+                                        onChordsClick = {
+                                            selectedChords = it
+                                        },
+                                        onTabClick = {
+                                            selectedTab = it
+                                        },
+                                        onClose = {}
+                                    )
+                                }
                             }
                         }
                     }
@@ -137,6 +193,55 @@ fun TabsClientApp(
             }
         }
     }
+}
+
+@Composable
+fun TabsClientTopBar(
+    destination: AppDestinations,
+    canNavigateBack: Boolean,
+    onBack: () -> Unit,
+    isSearching: Boolean,
+    onSearchToggle: () -> Unit
+) {
+    TopAppBar(
+        title = {
+            Text(
+                when (destination) {
+                    AppDestinations.SONGS -> "Saved Songs"
+                    AppDestinations.SETTINGS -> "Settings"
+                }
+            )
+        },
+        navigationIcon = {
+            if (canNavigateBack) {
+                // Why not iconbutton?
+                Icon(
+                    imageVector = Icons.AutoMirrored.Default.ArrowBack,
+                    contentDescription = "Back",
+                    modifier = Modifier
+                        .clickable(onClick = onBack)
+                        .padding(8.dp)
+                )
+            }
+        },
+        actions = {
+            if (destination == AppDestinations.SONGS) {
+                Icon(
+                    imageVector = if (isSearching)
+                        Icons.Default.Close
+                    else
+                        Icons.Default.Search,
+                    contentDescription = "Search",
+                    modifier = Modifier
+                        .clickable(onClick = onSearchToggle)
+                        .padding(8.dp)
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    )
 }
 
 @Composable
@@ -203,39 +308,73 @@ fun SongBottomSheet(
 }
 
 
-// TODO: Implement searching
 @Composable
 fun SongListScreen(
     songs: List<Song>,
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     onSongClick: (Song) -> Unit,
+    listState: LazyListState,
+    isSearching: Boolean,
+    searchQuery: String,
+    onSearchChange: (String) -> Unit
 ) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(isSearching) {
+        // TODO: Optionally remember scroll state before search and restore
+        //  after returning from search
+        if (isSearching) {
+            listState.animateScrollToItem(0)
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
+
+    val filteredSongs = remember(songs, searchQuery) {
+        if (searchQuery.isBlank()) {
+            songs
+        } else {
+            songs.filter {
+                it.title.contains(searchQuery, ignoreCase = true) ||
+                        it.artist.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
     PullToRefreshBox(
         isRefreshing = isRefreshing,
         onRefresh = onRefresh,
         modifier = Modifier.fillMaxSize(),
     ) {
         LazyColumn(
+            state = listState,
             modifier = Modifier
-                .fillMaxSize()
-                .padding(start = 16.dp, end = 16.dp),
-            contentPadding = PaddingValues(top = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (songs.isEmpty() && !isRefreshing) {
-                item {Text("No songs found", modifier = Modifier.padding(16.dp))}
-            } else {
+            if (isSearching) {
                 item {
-                    Text(
-                        "Saved songs",
-                        modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.primary,
-
-                        )
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = onSearchChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester),
+                        // TODO: Try label
+                        placeholder = { Text("Search songs") },
+                        singleLine = true,
+                    )
                 }
-                items(songs) { song ->
+            }
+
+            if (filteredSongs.isEmpty() && !isRefreshing) {
+                item { Text("No songs found", modifier = Modifier.padding(16.dp)) }
+            } else {
+                items(filteredSongs) { song ->
                     SongRow(song) { onSongClick(song) }
                 }
             }
@@ -269,7 +408,10 @@ fun SongRow(song: Song, onClick: () -> Unit) {
                 Text(song.artist, style = MaterialTheme.typography.bodyMedium)
             }
             if (song.tabs.isNotEmpty()) {
-                Icon(imageVector = Icons.AutoMirrored.Default.QueueMusic, contentDescription = "Tabs icon")
+                Icon(
+                    imageVector = Icons.AutoMirrored.Default.QueueMusic,
+                    contentDescription = "Tabs icon"
+                )
             }
             if (song.chords.isNotEmpty()) {
                 Icon(imageVector = Icons.Default.FontDownload, contentDescription = "Chords icon")
@@ -279,7 +421,7 @@ fun SongRow(song: Song, onClick: () -> Unit) {
 }
 
 @Composable
-fun ProfileScreen(
+fun SettingsScreen(
 ) {
     val context = LocalContext.current
 
@@ -297,9 +439,23 @@ fun ProfileScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 40.dp, start = 16.dp, end = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
+        item {
+            Text(
+                "Note: settings are saved automatically",
+                color = MaterialTheme.colorScheme.secondaryFixedDim
+            )
+        }
+        item { HorizontalDivider() }
+        item {
+            Text(
+                "User settings",
+                color = MaterialTheme.colorScheme.primaryFixedDim,
+                style = MaterialTheme.typography.titleLarge
+            )
+        }
         item {
             OutlinedTextField(
                 value = username,
@@ -317,7 +473,7 @@ fun ProfileScreen(
         }
         item {
             OutlinedTextField(
-                value=password,
+                value = password,
                 onValueChange = {
                     password = it
                     saveCredentials(
@@ -325,12 +481,21 @@ fun ProfileScreen(
                         username,
                         password,
                         serverUrl
-                    )},
+                    )
+                },
                 label = { Text("Password") },
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Password
                 )
+            )
+        }
+        item { HorizontalDivider() }
+        item {
+            Text(
+                "Server settings",
+                color = MaterialTheme.colorScheme.primaryFixedDim,
+                style = MaterialTheme.typography.titleLarge
             )
         }
         item {
@@ -351,23 +516,32 @@ fun ProfileScreen(
         item {
             // TODO: Implement onClick
             Button({}) {
-                Text("Update server cache")
+                Text("Refresh server cache")
             }
         }
     }
 }
 
 @Composable
-fun TabDetailScreen(tab: Tab, onBack: () -> Unit) {
+fun TabDetailScreen(tab: Tab, song: Song, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
 
     val scrollState = rememberScrollState()
 
-    Column(modifier = Modifier
-        .padding(top = 16.dp, start = 16.dp, end = 16.dp)
-        .verticalScroll(scrollState)
-        .fillMaxSize()
+
+
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 16.dp)
+            .verticalScroll(scrollState)
+            .fillMaxSize()
     ) {
+        Text(
+            "${song.artist} - ${song.title}",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+
         Text(
             // TODO: Temporary replacement,
             //  figure out actual chord rendering
@@ -383,19 +557,26 @@ fun TabDetailScreen(tab: Tab, onBack: () -> Unit) {
 }
 
 @Composable
-fun ChordsDetailScreen(chords: Chords, onBack: () -> Unit) {
+fun ChordsDetailScreen(chords: Chords, song: Song, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
 
     val scrollState = rememberScrollState()
 
-    Column(modifier = Modifier
-        .padding(top = 16.dp, start = 16.dp, end = 16.dp)
-        .verticalScroll(scrollState)
-        .fillMaxSize()
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 16.dp)
+            .verticalScroll(scrollState)
+            .fillMaxSize()
     ) {
         Text(
+            "${song.artist} - ${song.title}",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+
+        Text(
             // TODO: Temporary replacement,
-            //  figure out actual tab
+            //  figure out actual tab rendering
             chords.content
                 .replace("[tab]", "")
                 .replace("[/tab]", "")
